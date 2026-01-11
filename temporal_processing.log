@@ -1,0 +1,18 @@
+2026-01-10 23:21:59,399 - INFO - Loading data from trotting_data_2025_final.csv
+2026-01-10 23:22:00,137 - INFO - Loaded 215039 records
+2026-01-10 23:22:00,138 - INFO - Date range: 2025-01-01 00:00:00 to 2025-12-31 00:00:00
+2026-01-10 23:22:00,139 - INFO - Unique dates: 365
+2026-01-10 23:22:00,139 - INFO - Calculating features using all available data
+2026-01-10 23:22:00,551 - INFO - Calculating temporal driver stats (lookback: 90 days)
+2026-01-10 23:31:15,131 - INFO - Calculating temporal trainer stats (lookback: 90 days)
+2026-01-10 23:32:29,391 - INFO - Calculating temporal horse form (last 5 races)
+2026-01-10 23:33:21,930 - INFO - Processed 215039 records with 261 columns
+2026-01-10 23:33:27,722 - INFO - 
+Saved to temporal_processed_data.csv
+2026-01-10 23:33:27,863 - INFO - 
+Temporal split:
+2026-01-10 23:33:27,863 - INFO -   Training: 2025-01-01 00:00:00 to 2025-10-31 00:00:00 (180012 samples)
+2026-01-10 23:33:27,863 - INFO -   Testing:  2025-11-01 00:00:00 to 2025-12-31 00:00:00 (35027 samples)
+2026-01-10 23:33:27,863 - INFO - 
+Training samples: 180012
+2026-01-10 23:33:27,863 - INFO - Testing samples: 35027
