@@ -136,28 +136,81 @@ race_cards = soup.find_all('div', class_=re.compile(r'race.*card|program.*item',
 
 ## Machine Learning Integration
 
+**See MODEL_TRAINING_GUIDE.md for complete training instructions.**
+
+### Quick Start - Model Training
+
+```bash
+# Retrain with existing data
+python train_vgame_model.py --data temporal_processed_data.csv --train-end 2025-10-31
+
+# Collect new V-game tagged data
+python collect_vgame_data.py --start 2025-01-01 --end 2025-12-31 --output vgame_data.csv
+
+# Full pipeline
+python temporal_data_processor.py vgame_data.csv
+python train_vgame_model.py --data temporal_processed_data.csv --train-end 2025-10-31
+```
+
+### Model Architecture
+
 The processed data is designed for Random Forest classification with SMOTE for class balancing:
 
 ```python
-# Example model setup (from README)
 from sklearn.ensemble import RandomForestClassifier
 from imblearn.over_sampling import SMOTE
 
-# Features exclude: is_winner, is_top3, finish_position,
-# horse_name, driver, trainer, date, race_id, start_time, track
 rf_model = RandomForestClassifier(
     n_estimators=100,
     max_depth=20,
     min_samples_split=10,
     random_state=42,
-    n_jobs=-1
+    n_jobs=-1,
+    class_weight='balanced'
 )
 ```
 
-Target variables:
+### Target Variables
+
 - `is_winner` - Binary classification (most common use case)
 - `is_top3` - Top-3 prediction for "placering" bets
 - `finish_position` - Regression target
+
+### Critical: Temporal Train/Test Split
+
+**NEVER use random train/test split for time-series data!**
+
+```python
+# ✅ CORRECT - Temporal split
+train_data = df[df['date'] <= '2025-10-31']
+test_data = df[df['date'] >= '2025-11-01']
+
+# ❌ WRONG - Random split (causes data leakage)
+train_test_split(X, y, test_size=0.2, random_state=42)
+```
+
+**Why temporal matters:**
+- Racing is time-series data
+- Must predict FUTURE races, not random samples
+- Random split leaks future information into training
+- Results in overly optimistic metrics
+
+### Expected Performance
+
+**Realistic metrics** (on held-out test set):
+- Per-race accuracy: 20-25% (realistic win rate when betting)
+- ROC-AUC: 0.65-0.75
+- Horse-level accuracy: 75-85% (less important for betting)
+
+**High-confidence picks** (predicted_prob >= 0.35):
+- Win rate: 30-40%
+- Fewer races but higher success rate
+
+### Current Models
+
+- `temporal_rf_model.pkl` - Current production model
+- `temporal_rf_metadata.json` - Model info and performance metrics
+- Trained on 2025 data with temporal validation
 
 ## Historical Data Collection
 
@@ -188,9 +241,61 @@ for date in dates:
 
 **Time Parsing Failures**: Check for new formats in ATG's race times, update regex in `parse_record_time()`.
 
+## Betting Tool
+
+### V-Game Betting System (`create_bet.py`)
+A tool for generating optimal betting slips for Swedish V-game betting systems.
+
+**See VGAME_BETTING_RULES.md for complete rules and game type explanations.**
+
+#### Quick Reference - V-Games
+
+| Game | Races | Typical Day | Pool Size | Command |
+|------|-------|------------|-----------|---------|
+| **V75** | 7 | Saturday | 30-100M SEK | `python create_bet.py --game V75` |
+| **V86** | 8 | Wed/Sat | 20-60M SEK | `python create_bet.py --game V86` |
+| **V85** | 8 | Friday | 10-30M SEK | `python create_bet.py --game V85` |
+| **V65** | 6 | Any day | 2-10M SEK | `python create_bet.py --game V65` |
+| **V64** | 6 | Tue/Thu/Sun | 3-8M SEK | `python create_bet.py --game V64` |
+| **V5** | 5 | Variable | 1-3M SEK | `python create_bet.py --game V5` |
+| **V4** | 4 | Variable | 0.5-2M SEK | `python create_bet.py --game V4` |
+| **V3** | 3 | Lunch | 0.2-1M SEK | `python create_bet.py --game V3` |
+| **GS75** | 7 | Sat (4x/year) | 100M+ SEK | `python create_bet.py --game GS75` |
+
+#### Betting Tool Usage
+
+```bash
+# Auto-find next race (any type)
+python create_bet.py
+
+# Specific V-game type
+python create_bet.py --game V75
+python create_bet.py --game V86 --total 500
+
+# Track-based search
+python create_bet.py --track solvalla
+
+# Date-based search
+python create_bet.py --date 2026-01-17
+```
+
+**Strategy**: Individual high-EV betting (NOT system/pool betting)
+- Analyzes V-game races but places individual WIN bets
+- Uses ML model (temporal_rf_model.pkl) for predictions
+- Selects horses with highest expected value
+- Better ROI than traditional system betting
+
+#### How Our Tool Differs from Traditional V-Game Betting
+
+**Traditional V-Game**: Pick all winners correctly → share prize pool
+**Our Tool**: Individual bets on high-probability horses → profit on each win
+
+This means you can profit even without hitting all races, with more consistent returns.
+
 ## Important Domains
 
 - **ATG.se** - Main betting/program site (calendar: `/spel/kalender/YYYY-MM-DD`)
+  - API: `https://www.atg.se/services/racinginfo/v1/api`
 - **travsport.se** - Official results and statistics
-- **V75** - Special 7-race betting format (high prize pools)
+- **V-Games** - Pool betting systems (V75, V86, V85, V65, V64, V5, V4, V3, GS75)
 - **Elitloppet** - Sweden's premier trotting race

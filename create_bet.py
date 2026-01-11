@@ -3,14 +3,18 @@
 Generate optimal betting slip for maximum profit potential.
 
 Usage:
-    python create_bet.py --total 1000                 # Auto-find next V85, bet 1000 SEK
-    python create_bet.py                              # Auto-find next V85, bet 300 SEK (default)
+    python create_bet.py --total 1000                 # Auto-find next race, bet 1000 SEK
+    python create_bet.py                              # Auto-find next race, bet 300 SEK (default)
+    python create_bet.py --game V75                   # Auto-find next V75 race
+    python create_bet.py --game V86 --total 500       # Auto-find next V86, bet 500 SEK
     python create_bet.py --date 2026-01-17            # Specific date
     python create_bet.py --total 500 --date 2026-01-17
     python create_bet.py --track solvalla             # Auto-find next race on Solvalla
     python create_bet.py --track umaker --total 500   # Next race on Umåker, bet 500 SEK
 
-Strategy: Individual high-EV betting (not V85 system)
+Supported game types: V75, V86, V85, V65, V64, V4, V5, GS75, V3
+
+Strategy: Individual high-EV betting (not system betting)
 Based on temporal model showing 21.5% win rate, +96.6% ROI
 """
 
@@ -31,7 +35,11 @@ class BettingSlipGenerator:
 
     def find_next_v85(self, max_days=30):
         """Find the next V85 race day by searching ATG calendar"""
-        print("🔍 Searching for next V85 race day...")
+        return self.find_next_game('V85', max_days)
+
+    def find_next_game(self, game_type='V85', max_days=30):
+        """Find the next game of specified type by searching ATG calendar"""
+        print(f"🔍 Searching for next {game_type} race day...")
         print()
 
         today = datetime.now()
@@ -40,26 +48,66 @@ class BettingSlipGenerator:
             check_date = (today + timedelta(days=i)).strftime('%Y-%m-%d')
 
             try:
-                v85_info = self.predictor.scraper.get_v85_info(check_date)
+                game_info = self.predictor.scraper.get_game_info(check_date, game_type)
 
-                if v85_info and v85_info.get('races') and len(v85_info.get('races', [])) > 0:
-                    races = v85_info.get('races', [])
-                    track_name = v85_info.get('track', {}).get('name', 'Unknown')
-                    track_id = v85_info.get('trackId', 'Unknown')
+                if game_info and game_info.get('race_ids') and len(game_info.get('race_ids', [])) > 0:
+                    race_ids = game_info.get('race_ids', [])
 
-                    print(f"✅ Found V85 on {check_date}")
-                    print(f"   Track: {track_name} (ID: {track_id})")
-                    print(f"   Number of races: {len(races)}")
+                    print(f"✅ Found {game_type} on {check_date}")
+                    print(f"   Game ID: {game_info.get('game_id', 'Unknown')}")
+                    print(f"   Number of races: {len(race_ids)}")
                     print()
 
-                    return check_date
+                    return check_date, game_type
 
             except Exception as e:
                 # Continue searching on error
                 continue
 
-        print(f"❌ No V85 found in next {max_days} days")
-        print("\nPlease check ATG.se for V85 schedule or try a later date range.")
+        print(f"❌ No {game_type} found in next {max_days} days")
+        print(f"\nPlease check ATG.se for {game_type} schedule or try a later date range.")
+        return None, None
+
+    def find_next_race(self, max_days=30):
+        """Find the next race day by searching ATG calendar (any race, not just V85)"""
+        print("🔍 Searching for next race day...")
+        print()
+
+        today = datetime.now()
+
+        for i in range(max_days):
+            check_date = (today + timedelta(days=i)).strftime('%Y-%m-%d')
+
+            try:
+                calendar = self.predictor.scraper.get_calendar_for_date(check_date)
+
+                if not calendar or not calendar.get('tracks'):
+                    continue
+
+                # Find first track with races
+                for track in calendar.get('tracks', []):
+                    races = track.get('races', [])
+
+                    if races:
+                        race_info = {
+                            'date': check_date,
+                            'track_name': track.get('name'),
+                            'track_id': track.get('id'),
+                            'races': races
+                        }
+
+                        print(f"✅ Found races on {track.get('name')} on {check_date}")
+                        print(f"   Number of races: {len(races)}")
+                        print()
+
+                        return race_info
+
+            except Exception as e:
+                # Continue searching on error
+                continue
+
+        print(f"❌ No races found in next {max_days} days")
+        print("\nPlease check ATG.se for race schedule or try a later date range.")
         return None
 
     def find_next_race_on_track(self, track_name, max_days=30):
@@ -332,30 +380,42 @@ class BettingSlipGenerator:
         print("Good luck! 🍀")
         print()
 
-    def generate_betting_slip(self, date_str):
+    def generate_betting_slip(self, date_str, game_type=None):
         """Generate optimal betting slip"""
 
+        race_type_label = game_type if game_type else ""
+
         print("="*80)
-        print(f"🎯 OPTIMAL V85 BETTING SLIP")
+        print(f"🎯 OPTIMAL {race_type_label} BETTING SLIP".strip())
         print(f"📅 Date: {date_str}")
         print(f"💰 Budget: {self.budget} SEK")
         print(f"📊 Strategy: Individual High-EV Betting (Balanced Profit)")
         print("="*80)
         print()
 
-        # Get V85 predictions
+        # Get race predictions
         print("🔍 Fetching race data and generating predictions...")
         print()
 
         try:
-            races = self.predictor.scraper.get_v85_info(date_str)
-            if not races or not races.get('races'):
-                print(f"❌ No V85 races found for {date_str}")
-                print("\nTry checking ATG.se for V85 schedule or use a different date.")
-                return
+            # If game_type is specified, get that game's races, otherwise get V85 for backwards compatibility
+            if game_type:
+                game_info = self.predictor.scraper.get_game_info(date_str, game_type)
+                if not game_info or not game_info.get('race_ids'):
+                    print(f"❌ No {game_type} races found for {date_str}")
+                    print(f"\nTry checking ATG.se for {game_type} schedule or use a different date.")
+                    return
+                race_ids = game_info.get('race_ids', [])
+            else:
+                races = self.predictor.scraper.get_v85_info(date_str)
+                if not races or not races.get('races'):
+                    print(f"❌ No races found for {date_str}")
+                    print(f"\nTry checking ATG.se for race schedule or use a different date.")
+                    return
+                race_ids = races.get('races', [])
 
-            race_ids = races.get('races', [])
-            print(f"✓ Found {len(race_ids)} V85 races")
+            race_label = f"{game_type} races" if game_type else "races"
+            print(f"✓ Found {len(race_ids)} {race_label}")
             print()
 
         except Exception as e:
@@ -366,7 +426,8 @@ class BettingSlipGenerator:
         all_opportunities = []
 
         for i, race_id in enumerate(race_ids, 1):
-            print(f"📊 Analyzing V85 Race {i}...")
+            race_label = f"{game_type} Race" if game_type else "Race"
+            print(f"📊 Analyzing {race_label} {i}...")
 
             try:
                 # Get race details and predictions
@@ -423,7 +484,7 @@ class BettingSlipGenerator:
 
         if not all_opportunities:
             print("❌ No good betting opportunities found!")
-            print("\nRecommendation: SKIP this V85 - wait for better opportunities")
+            print("\nRecommendation: SKIP this race day - wait for better opportunities")
             return
 
         # Sort by EV (or probability if all EV are zero)
@@ -465,7 +526,8 @@ class BettingSlipGenerator:
         # Print betting slip
         total_bet = 0
         for i, bet in enumerate(selected_bets, 1):
-            print(f"{bet['category']} - V85 Race {bet['race']}")
+            race_label = f"{game_type} Race" if game_type else "Race"
+            print(f"{bet['category']} - {race_label} {bet['race']}")
             print(f"   Horse #{bet['start_num']}: {bet['horse_name']}")
             print(f"   Win probability: {bet['probability']*100:.1f}%")
             print(f"   Estimated odds: {bet['odds']:.1f}")
@@ -532,15 +594,17 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s                              # Auto-find next V85, bet 300 SEK (default)
-  %(prog)s --total 1000                 # Auto-find next V85, bet 1000 SEK
+  %(prog)s                              # Auto-find next race, bet 300 SEK (default)
+  %(prog)s --total 1000                 # Auto-find next race, bet 1000 SEK
+  %(prog)s --game V75                   # Auto-find next V75, bet 300 SEK
+  %(prog)s --game V86 --total 500       # Auto-find next V86, bet 500 SEK
   %(prog)s --date 2026-01-17            # Specific date, bet 300 SEK
   %(prog)s --total 500 --date 2026-01-17  # Specific date, bet 500 SEK
   %(prog)s --track solvalla             # Auto-find next race on Solvalla
   %(prog)s --track umaker --total 500   # Auto-find next race on Umåker, bet 500 SEK
 
 Strategy:
-  Individual high-EV betting (not V85 system jackpot)
+  Individual high-EV betting (not system betting)
   Based on temporal model: 21.5%% win rate, +96.6%% ROI
         """
     )
@@ -557,7 +621,7 @@ Strategy:
         '--date',
         type=str,
         metavar='YYYY-MM-DD',
-        help='Specific race date (default: auto-find next V85 or track)'
+        help='Specific race date (default: auto-find next race or track)'
     )
 
     parser.add_argument(
@@ -565,6 +629,13 @@ Strategy:
         type=str,
         metavar='TRACK',
         help='Find next race on specific track (e.g., solvalla, umaker, aby, jagersro)'
+    )
+
+    parser.add_argument(
+        '--game',
+        type=str,
+        metavar='TYPE',
+        help='Search for specific game type: V75, V86, V85, V65, V64, etc. (default: any race)'
     )
 
     args = parser.parse_args()
@@ -588,6 +659,28 @@ Strategy:
         print("Please use either --date for a specific date or --track to find next race on a track")
         sys.exit(1)
 
+    if args.date and args.game:
+        print("❌ Cannot use both --date and --game options together")
+        print("Please use either --date for a specific date or --game to find next game")
+        sys.exit(1)
+
+    if args.track and args.game:
+        print("❌ Cannot use both --track and --game options together")
+        print("Please use either --track for a specific track or --game to find next game")
+        sys.exit(1)
+
+    # Validate game type if specified
+    valid_game_types = ['V75', 'V86', 'V85', 'V65', 'V64', 'V4', 'V5', 'GS75', 'V3']
+    if args.game:
+        game_type = args.game.upper()
+        if game_type not in valid_game_types:
+            print(f"⚠️  Warning: '{game_type}' may not be a valid game type")
+            print(f"   Common types: {', '.join(valid_game_types)}")
+            print(f"   Continuing anyway...")
+            print()
+        else:
+            game_type = args.game.upper()
+
     # Handle track-based search
     if args.track:
         race_info = generator.find_next_race_on_track(args.track, max_days=30)
@@ -604,13 +697,19 @@ Strategy:
             print(f"❌ Invalid date format: {args.date}")
             print("Please use YYYY-MM-DD format")
             sys.exit(1)
-        generator.generate_betting_slip(date_str)
-    # Default: auto-find next V85
-    else:
-        date_str = generator.find_next_v85(max_days=30)
+        generator.generate_betting_slip(date_str, game_type=None)
+    # Handle game type search
+    elif args.game:
+        date_str, game_type = generator.find_next_game(args.game.upper(), max_days=30)
         if not date_str:
             sys.exit(1)
-        generator.generate_betting_slip(date_str)
+        generator.generate_betting_slip(date_str, game_type=game_type)
+    # Default: auto-find next race (any race)
+    else:
+        race_info = generator.find_next_race(max_days=30)
+        if not race_info:
+            sys.exit(1)
+        generator.generate_betting_slip_for_track(race_info)
 
 
 if __name__ == '__main__':

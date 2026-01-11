@@ -64,6 +64,59 @@ class ATGAPIScraper:
             logger.error(f"Error fetching calendar for {date}: {e}")
             return {}
 
+    def get_game_info(self, date: str, game_type: str) -> Optional[Dict]:
+        """
+        Get game information for a specific date and game type
+
+        Args:
+            date: Date string in YYYY-MM-DD format
+            game_type: Game type (e.g., 'V85', 'V86', 'V75', 'V65', 'V64')
+
+        Returns:
+            Dict with game info including race_ids and mapping to race numbers
+            Format: {
+                'game_id': 'V85_...',
+                'game_type': 'V85',
+                'track_id': 23,
+                'race_ids': ['2026-01-10_23_3', ...],
+                'race_mapping': {'2026-01-10_23_3': 1, ...}  # race_id -> game race number
+            }
+        """
+        calendar = self.get_calendar_for_date(date)
+
+        if not calendar:
+            return None
+
+        # Check if there's a game of the specified type
+        games = calendar.get('games', {})
+        game_list = games.get(game_type.upper(), [])
+
+        if not game_list:
+            logger.info(f"No {game_type} game found for {date}")
+            return None
+
+        # Usually only one game of each type per day
+        game = game_list[0]
+        race_ids = game.get('races', [])
+
+        # Create mapping: race_id -> game race number
+        race_mapping = {race_id: i + 1 for i, race_id in enumerate(race_ids)}
+
+        info = {
+            'game_id': game.get('id'),
+            'game_type': game_type.upper(),
+            'status': game.get('status'),
+            'track_id': game.get('tracks', [None])[0],
+            'race_ids': race_ids,
+            'race_mapping': race_mapping,
+            'start_time': game.get('startTime'),
+        }
+
+        logger.info(f"Found {game_type} game: {info['game_id']} with {len(race_ids)} races")
+        logger.info(f"{game_type} races: track races {[rid.split('_')[-1] for rid in race_ids]} → {game_type} races 1-{len(race_ids)}")
+
+        return info
+
     def get_v85_info(self, date: str) -> Optional[Dict]:
         """
         Get V85 game information for a specific date
@@ -80,38 +133,12 @@ class ATGAPIScraper:
                 'v85_race_mapping': {'2026-01-10_23_3': 1, ...}  # race_id -> v85_number
             }
         """
-        calendar = self.get_calendar_for_date(date)
-
-        if not calendar:
+        info = self.get_game_info(date, 'V85')
+        if not info:
             return None
 
-        # Check if there's a V85 game
-        games = calendar.get('games', {})
-        v85_games = games.get('V85', [])
-
-        if not v85_games:
-            logger.info(f"No V85 game found for {date}")
-            return None
-
-        # Usually only one V85 per day
-        v85_game = v85_games[0]
-        race_ids = v85_game.get('races', [])
-
-        # Create mapping: race_id -> V85 race number (1-8)
-        v85_race_mapping = {race_id: i + 1 for i, race_id in enumerate(race_ids)}
-
-        info = {
-            'game_id': v85_game.get('id'),
-            'status': v85_game.get('status'),
-            'track_id': v85_game.get('tracks', [None])[0],
-            'race_ids': race_ids,
-            'v85_race_mapping': v85_race_mapping,
-            'start_time': v85_game.get('startTime'),
-        }
-
-        logger.info(f"Found V85 game: {info['game_id']} with {len(race_ids)} races")
-        logger.info(f"V85 races: track races {[rid.split('_')[-1] for rid in race_ids]} → V85 races 1-{len(race_ids)}")
-
+        # Convert to old format for backwards compatibility
+        info['v85_race_mapping'] = info.pop('race_mapping')
         return info
 
     def get_race_details(self, race_id: str) -> Optional[Dict]:
