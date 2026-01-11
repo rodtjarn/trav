@@ -44,6 +44,216 @@ class TemporalDataProcessor:
         self.data = df
         return df
 
+    def process_race_data(self, race_data_list: list, feature_cols: list = None) -> pd.DataFrame:
+        """
+        Process race data from API for live prediction
+
+        Args:
+            race_data_list: List of race data dictionaries from get_race_details()
+            feature_cols: List of feature columns expected by the model (optional)
+
+        Returns:
+            Processed DataFrame ready for prediction
+        """
+        # Extract horse data from each race
+        all_horse_data = []
+
+        for race_data in race_data_list:
+            if not race_data:
+                continue
+
+            # Extract data for each start/horse
+            for start in race_data.get('starts', []):
+                horse_data = self._extract_horse_data_from_api(start, race_data)
+                all_horse_data.append(horse_data)
+
+        if not all_horse_data:
+            logger.warning("No horse data extracted from race data")
+            return pd.DataFrame()
+
+        # Convert to DataFrame
+        df = pd.DataFrame(all_horse_data)
+
+        # Ensure date column exists
+        if 'race_date' in df.columns:
+            df['date'] = pd.to_datetime(df['race_date'])
+        elif 'start_time' in df.columns:
+            # Try to extract date from start_time if it's a full datetime
+            df['date'] = pd.to_datetime(df['start_time'], errors='coerce')
+        else:
+            df['date'] = pd.Timestamp.now()
+
+        # Apply feature engineering
+        df = self._add_temporal_features(df)
+        df = self._add_post_position_features(df)
+        df = self._add_speed_features(df)
+        df = self._add_track_features(df)
+
+        # For live prediction, use stats from API (not temporal calculation)
+        df = self._add_driver_trainer_features_from_api(df)
+
+        # For horse form, use defaults (we don't have historical data)
+        df = self._add_default_horse_form(df)
+
+        # If feature_cols provided, ensure all features exist (fill missing with 0)
+        if feature_cols:
+            missing_features = [feat for feat in feature_cols if feat not in df.columns]
+            if missing_features:
+                # Create all missing columns at once for better performance
+                missing_df = pd.DataFrame(0, index=df.index, columns=missing_features)
+                df = pd.concat([df, missing_df], axis=1)
+
+        # Replace infinity and NaN values
+        df = df.replace([np.inf, -np.inf], 0)
+        df = df.fillna(0)
+
+        logger.info(f"Processed {len(df)} horses from {len(race_data_list)} race(s)")
+        return df
+
+    def _extract_horse_data_from_api(self, start: dict, race_info: dict) -> dict:
+        """Extract horse data from API response"""
+        horse = start.get('horse', {})
+        driver = start.get('driver', {})
+        trainer = horse.get('trainer', {})
+        result = start.get('result', {})
+        track = race_info.get('track', {})
+
+        # Extract record time
+        record_time = horse.get('record', {}).get('time', {})
+        record_seconds = (
+            record_time.get('minutes', 0) * 60 +
+            record_time.get('seconds', 0) +
+            record_time.get('tenths', 0) / 10
+        )
+
+        # Get driver statistics (use most recent year)
+        driver_stats = driver.get('statistics', {}).get('years', {})
+        driver_year = max(driver_stats.keys()) if driver_stats else None
+        driver_year_stats = driver_stats.get(driver_year, {}) if driver_year else {}
+
+        # Get trainer statistics
+        trainer_stats = trainer.get('statistics', {}).get('years', {})
+        trainer_year = max(trainer_stats.keys()) if trainer_stats else None
+        trainer_year_stats = trainer_stats.get(trainer_year, {}) if trainer_year else {}
+
+        data = {
+            # Race info
+            'race_id': race_info.get('id'),
+            'race_date': race_info.get('date'),
+            'race_number': race_info.get('number'),
+            'track_name': track.get('name'),
+            'track_id': track.get('id'),
+            'track_condition': track.get('condition'),
+            'distance': race_info.get('distance'),
+            'start_method': race_info.get('startMethod'),
+            'start_time': race_info.get('startTime'),
+
+            # Horse info
+            'horse_id': horse.get('id'),
+            'horse_name': horse.get('name'),
+            'horse_age': horse.get('age'),
+            'horse_sex': horse.get('sex'),
+            'horse_money': horse.get('money'),
+
+            # Start info
+            'start_number': start.get('number'),
+            'post_position': start.get('postPosition'),
+            'distance_handicap': start.get('distance', 0) - race_info.get('distance', 0),
+
+            # Record/performance
+            'record_time': record_seconds,
+
+            # Driver info
+            'driver_id': driver.get('id'),
+            'driver_first_name': driver.get('firstName'),
+            'driver_last_name': driver.get('lastName'),
+            'driver_starts_api': driver_year_stats.get('starts', 0),
+            'driver_wins_api': driver_year_stats.get('wins', 0),
+            'driver_second_api': driver_year_stats.get('second', 0),
+            'driver_third_api': driver_year_stats.get('third', 0),
+            'driver_earnings_api': driver_year_stats.get('money', 0),
+
+            # Trainer info
+            'trainer_id': trainer.get('id'),
+            'trainer_first_name': trainer.get('firstName'),
+            'trainer_last_name': trainer.get('lastName'),
+            'trainer_starts_api': trainer_year_stats.get('starts', 0),
+            'trainer_wins_api': trainer_year_stats.get('wins', 0),
+            'trainer_second_api': trainer_year_stats.get('second', 0),
+            'trainer_third_api': trainer_year_stats.get('third', 0),
+            'trainer_earnings_api': trainer_year_stats.get('money', 0),
+
+            # Results (for completed races)
+            'finish_place': result.get('place', 0) if result else 0,
+            'galloped': result.get('galloped', False) if result else False,
+        }
+
+        return data
+
+    def _add_driver_trainer_features_from_api(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate driver/trainer features from API-provided stats"""
+        df = df.copy()
+
+        # Driver features
+        df['driver_starts'] = df['driver_starts_api']
+        df['driver_wins'] = df['driver_wins_api']
+        df['driver_second'] = df['driver_second_api']
+        df['driver_third'] = df['driver_third_api']
+        df['driver_earnings'] = df['driver_earnings_api']
+
+        df['driver_win_rate'] = np.where(
+            df['driver_starts'] > 0,
+            df['driver_wins'] / df['driver_starts'],
+            0
+        )
+        df['driver_win_percentage'] = np.where(
+            df['driver_starts'] > 0,
+            (df['driver_wins'] / df['driver_starts']) * 100,
+            0
+        )
+        df['driver_top3_rate'] = np.where(
+            df['driver_starts'] > 0,
+            (df['driver_wins'] + df['driver_second'] + df['driver_third']) / df['driver_starts'],
+            0
+        )
+
+        # Trainer features
+        df['trainer_starts'] = df['trainer_starts_api']
+        df['trainer_wins'] = df['trainer_wins_api']
+        df['trainer_second'] = df['trainer_second_api']
+        df['trainer_third'] = df['trainer_third_api']
+        df['trainer_earnings'] = df['trainer_earnings_api']
+
+        df['trainer_win_rate'] = np.where(
+            df['trainer_starts'] > 0,
+            df['trainer_wins'] / df['trainer_starts'],
+            0
+        )
+        df['trainer_win_percentage'] = np.where(
+            df['trainer_starts'] > 0,
+            (df['trainer_wins'] / df['trainer_starts']) * 100,
+            0
+        )
+        df['trainer_top3_rate'] = np.where(
+            df['trainer_starts'] > 0,
+            (df['trainer_wins'] + df['trainer_second'] + df['trainer_third']) / df['trainer_starts'],
+            0
+        )
+
+        return df
+
+    def _add_default_horse_form(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add horse form features with default values (no historical data available)"""
+        df = df.copy()
+
+        # Use defaults for horse form (would need historical data to calculate properly)
+        df['horse_recent_starts'] = 0
+        df['horse_recent_wins'] = 0
+        df['horse_recent_avg_position'] = 5.0  # Neutral default
+        df['horse_days_since_last_race'] = 30  # Assume 30 days default
+
+        return df
+
     def calculate_temporal_features(self, cutoff_date: str = None) -> pd.DataFrame:
         """
         Calculate features for all races, using only data BEFORE cutoff_date

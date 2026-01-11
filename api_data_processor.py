@@ -22,6 +22,172 @@ class APIDataProcessor:
         logger.info(f"Loaded {len(df)} records from {filepath}")
         return df
 
+    def process_race_data(self, race_data_list: list) -> pd.DataFrame:
+        """
+        Process race data from API into ML-ready DataFrame
+
+        Args:
+            race_data_list: List of race data dictionaries from get_race_details()
+
+        Returns:
+            Processed DataFrame ready for prediction
+        """
+        # Extract horse data from each race
+        all_horse_data = []
+
+        for race_data in race_data_list:
+            if not race_data:
+                continue
+
+            # Extract data for each start/horse
+            for start in race_data.get('starts', []):
+                horse_data = self._extract_horse_data(start, race_data)
+                all_horse_data.append(horse_data)
+
+        if not all_horse_data:
+            logger.warning("No horse data extracted from race data")
+            return pd.DataFrame()
+
+        # Convert to DataFrame
+        df = pd.DataFrame(all_horse_data)
+
+        # Apply all processing steps
+        df = self.add_temporal_features(df)
+        df = self.add_post_position_features(df)
+        df = self.add_driver_trainer_rates(df)
+        df = self.add_speed_features(df)
+        df = self.add_track_importance(df)
+        df = self.encode_categorical(df)
+
+        # Don't create target variables for prediction data
+
+        # Prepare for ML (handle missing values, etc)
+        df, feature_cols, metadata_cols = self.prepare_for_ml(df)
+
+        logger.info(f"Processed {len(df)} horses from {len(race_data_list)} race(s)")
+        return df
+
+    def _extract_horse_data(self, start: dict, race_info: dict) -> dict:
+        """
+        Extract all relevant data for one horse/start
+        (Same logic as ATGAPIScraper.extract_horse_data)
+
+        Args:
+            start: Start data from API
+            race_info: Race metadata
+
+        Returns:
+            Flattened dictionary with all horse/race data
+        """
+        horse = start.get('horse', {})
+        driver = start.get('driver', {})
+        trainer = horse.get('trainer', {})
+        result = start.get('result', {})
+        track = race_info.get('track', {})
+
+        # Extract record time
+        record_time = horse.get('record', {}).get('time', {})
+        record_seconds = (
+            record_time.get('minutes', 0) * 60 +
+            record_time.get('seconds', 0) +
+            record_time.get('tenths', 0) / 10
+        )
+
+        # Extract finish time
+        km_time = result.get('kmTime', {})
+        finish_seconds = (
+            km_time.get('minutes', 0) * 60 +
+            km_time.get('seconds', 0) +
+            km_time.get('tenths', 0) / 10
+        )
+
+        # Get driver statistics (use most recent year)
+        driver_stats = driver.get('statistics', {}).get('years', {})
+        driver_year = max(driver_stats.keys()) if driver_stats else None
+        driver_year_stats = driver_stats.get(driver_year, {}) if driver_year else {}
+
+        # Get trainer statistics
+        trainer_stats = trainer.get('statistics', {}).get('years', {})
+        trainer_year = max(trainer_stats.keys()) if trainer_stats else None
+        trainer_year_stats = trainer_stats.get(trainer_year, {}) if trainer_year else {}
+
+        # Build comprehensive data dict
+        data = {
+            # Race info
+            'race_id': race_info.get('id'),
+            'race_date': race_info.get('date'),
+            'race_number': race_info.get('number'),
+            'track_name': track.get('name'),
+            'track_id': track.get('id'),
+            'track_condition': track.get('condition'),
+            'track_country': track.get('countryCode'),
+
+            # Race parameters
+            'distance': race_info.get('distance'),
+            'start_method': race_info.get('startMethod'),
+            'start_time': race_info.get('startTime'),
+
+            # Horse info
+            'horse_id': horse.get('id'),
+            'horse_name': horse.get('name'),
+            'horse_age': horse.get('age'),
+            'horse_sex': horse.get('sex'),
+            'horse_money': horse.get('money'),
+            'horse_color': horse.get('color'),
+
+            # Start info
+            'start_number': start.get('number'),
+            'post_position': start.get('postPosition'),
+            'distance_handicap': start.get('distance', 0) - race_info.get('distance', 0),
+
+            # Record/performance
+            'record_time': record_seconds,
+            'record_code': horse.get('record', {}).get('code'),
+
+            # Driver info
+            'driver_id': driver.get('id'),
+            'driver_first_name': driver.get('firstName'),
+            'driver_last_name': driver.get('lastName'),
+            'driver_short_name': driver.get('shortName'),
+            'driver_license': driver.get('license'),
+
+            # Driver stats
+            'driver_starts': driver_year_stats.get('starts', 0),
+            'driver_wins': driver_year_stats.get('wins', 0),
+            'driver_second': driver_year_stats.get('second', 0),
+            'driver_third': driver_year_stats.get('third', 0),
+            'driver_earnings': driver_year_stats.get('money', 0),
+
+            # Trainer info
+            'trainer_id': trainer.get('id'),
+            'trainer_first_name': trainer.get('firstName'),
+            'trainer_last_name': trainer.get('lastName'),
+            'trainer_short_name': trainer.get('shortName'),
+            'trainer_license': trainer.get('license'),
+
+            # Trainer stats
+            'trainer_starts': trainer_year_stats.get('starts', 0),
+            'trainer_wins': trainer_year_stats.get('wins', 0),
+            'trainer_second': trainer_year_stats.get('second', 0),
+            'trainer_third': trainer_year_stats.get('third', 0),
+            'trainer_earnings': trainer_year_stats.get('money', 0),
+
+            # Equipment
+            'shoes_front': start.get('horse', {}).get('shoes', {}).get('front'),
+            'shoes_back': start.get('horse', {}).get('shoes', {}).get('back'),
+            'sulky_type': start.get('horse', {}).get('sulky'),
+
+            # Results (for completed races)
+            'finish_place': result.get('place', 0) if result else 0,
+            'finish_order': result.get('order', 0) if result else 0,
+            'finish_time': finish_seconds if finish_seconds > 0 else None,
+            'galloped': result.get('galloped', False) if result else False,
+            'prize_money': result.get('prizeMoney', 0) if result else 0,
+            'final_odds': result.get('finalOdds', None) if result else None,
+        }
+
+        return data
+
     def add_temporal_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Extract temporal features from race date/time"""
         df = df.copy()

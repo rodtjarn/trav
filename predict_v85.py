@@ -10,6 +10,7 @@ import json
 from datetime import datetime, timedelta
 from atg_api_scraper import ATGAPIScraper
 from api_data_processor import APIDataProcessor
+from temporal_data_processor import TemporalDataProcessor
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -41,7 +42,12 @@ class V85Predictor:
         logger.info(f"Model uses {len(self.feature_cols)} features")
 
         self.scraper = ATGAPIScraper(delay=0.5)
-        self.processor = APIDataProcessor()
+
+        # Use TemporalDataProcessor for temporal models, APIDataProcessor otherwise
+        if 'temporal' in model_path.lower():
+            self.processor = TemporalDataProcessor()
+        else:
+            self.processor = APIDataProcessor()
 
     def find_v85_races(self, days_ahead=7):
         """

@@ -68,7 +68,11 @@ class BettingSlipGenerator:
         print()
 
         today = datetime.now()
+        # Normalize Swedish characters for better matching
         track_name_lower = track_name.lower()
+        track_name_normalized = (track_name_lower
+            .replace('å', 'a').replace('ä', 'a').replace('ö', 'o')
+            .replace('é', 'e').replace('è', 'e'))
 
         for i in range(max_days):
             check_date = (today + timedelta(days=i)).strftime('%Y-%m-%d')
@@ -82,9 +86,12 @@ class BettingSlipGenerator:
                 # Search through all tracks for matching track name
                 for track in calendar.get('tracks', []):
                     track_calendar_name = track.get('name', '').lower()
+                    track_calendar_normalized = (track_calendar_name
+                        .replace('å', 'a').replace('ä', 'a').replace('ö', 'o')
+                        .replace('é', 'e').replace('è', 'e'))
 
-                    # Check if track name matches (case-insensitive partial match)
-                    if track_name_lower in track_calendar_name:
+                    # Check if track name matches (case-insensitive partial match with normalization)
+                    if track_name_lower in track_calendar_name or track_name_normalized in track_calendar_normalized:
                         races = track.get('races', [])
 
                         if races:
@@ -115,14 +122,30 @@ class BettingSlipGenerator:
         return (probability * odds) - 1
 
     def categorize_bet(self, probability, odds, ev):
-        """Categorize bet by quality and determine bet type"""
-        if probability > 0.40 and 2.0 <= odds <= 4.0 and ev > 1.1:
+        """
+        Categorize bet by quality and determine bet type
+
+        When real odds aren't available (ev == 0), use probability-based strategy
+        """
+        # If EV is 0, we're using estimated fair odds - switch to probability-based strategy
+        if abs(ev) < 0.01:
+            if probability > 0.35:
+                return "🔥 STRONG", "WIN", 85
+            elif probability > 0.28:
+                return "⭐ GOOD", "WIN", 75
+            elif probability > 0.22:
+                return "💎 DECENT", "WIN", 65
+            else:
+                return "⚪ SKIP", "NONE", 0
+
+        # EV-based strategy (when real odds are available)
+        if probability > 0.40 and 2.0 <= odds <= 4.0 and ev > 0.3:
             return "🔥 EXCELLENT", "WIN", 85
-        elif probability > 0.25 and 4.0 <= odds <= 8.0 and ev > 1.1:
+        elif probability > 0.25 and 4.0 <= odds <= 8.0 and ev > 0.3:
             return "⭐ GOOD", "WIN", 75
-        elif probability > 0.20 and 8.0 <= odds <= 15.0 and ev > 1.2:
+        elif probability > 0.20 and 8.0 <= odds <= 15.0 and ev > 0.4:
             return "💎 VALUE", "PLACE", 70
-        elif probability > 0.15 and odds > 15.0 and ev > 1.5:
+        elif probability > 0.15 and odds > 15.0 and ev > 0.5:
             return "🎲 LONGSHOT", "PLACE", 70
         else:
             return "⚪ SKIP", "NONE", 0
@@ -160,7 +183,7 @@ class BettingSlipGenerator:
                     continue
 
                 # Process race through predictor
-                df = self.predictor.processor.process_race_data([race_data])
+                df = self.predictor.processor.process_race_data([race_data], self.predictor.feature_cols)
                 if df.empty:
                     print(f"   ⚠️  Could not process race data")
                     continue
@@ -210,8 +233,14 @@ class BettingSlipGenerator:
             print("\nRecommendation: SKIP this race day - wait for better opportunities")
             return
 
-        # Sort by EV and select top bets within budget
-        all_opportunities.sort(key=lambda x: x['ev'], reverse=True)
+        # Sort by EV (or probability if all EV are zero)
+        # Check if all EVs are near zero (estimated odds scenario)
+        if all(abs(opp['ev']) < 0.01 for opp in all_opportunities):
+            # Sort by probability when using estimated odds
+            all_opportunities.sort(key=lambda x: x['probability'], reverse=True)
+        else:
+            # Sort by EV when real odds are available
+            all_opportunities.sort(key=lambda x: x['ev'], reverse=True)
 
         selected_bets = []
         remaining_budget = self.budget
@@ -347,7 +376,7 @@ class BettingSlipGenerator:
                     continue
 
                 # Process race through predictor
-                df = self.predictor.processor.process_race_data([race_data])
+                df = self.predictor.processor.process_race_data([race_data], self.predictor.feature_cols)
                 if df.empty:
                     print(f"   ⚠️  Could not process race data")
                     continue
@@ -397,8 +426,14 @@ class BettingSlipGenerator:
             print("\nRecommendation: SKIP this V85 - wait for better opportunities")
             return
 
-        # Sort by EV and select top bets within budget
-        all_opportunities.sort(key=lambda x: x['ev'], reverse=True)
+        # Sort by EV (or probability if all EV are zero)
+        # Check if all EVs are near zero (estimated odds scenario)
+        if all(abs(opp['ev']) < 0.01 for opp in all_opportunities):
+            # Sort by probability when using estimated odds
+            all_opportunities.sort(key=lambda x: x['probability'], reverse=True)
+        else:
+            # Sort by EV when real odds are available
+            all_opportunities.sort(key=lambda x: x['ev'], reverse=True)
 
         selected_bets = []
         remaining_budget = self.budget
