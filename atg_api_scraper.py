@@ -281,6 +281,9 @@ class ATGAPIScraper:
             'shoes_front': horse.get('shoes', {}).get('front', {}).get('hasShoe'),
             'shoes_back': horse.get('shoes', {}).get('back', {}).get('hasShoe'),
             'sulky_type': horse.get('sulky', {}).get('type', {}).get('code'),
+
+            # Scratched status (horse withdrawn from race)
+            'scratched': start.get('scratched', False),
         }
 
         return data

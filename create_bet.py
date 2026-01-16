@@ -230,6 +230,16 @@ class BettingSlipGenerator:
                     print(f"   ⚠️  Could not fetch race details")
                     continue
 
+                # Check for scratched horses and display them
+                scratched_horses = []
+                for start in race_data.get('starts', []):
+                    if start.get('scratched', False):
+                        horse_name = start.get('horse', {}).get('name', 'Unknown')
+                        start_num = start.get('number', '?')
+                        scratched_horses.append(f"#{start_num} {horse_name}")
+                if scratched_horses:
+                    print(f"   ⚠️  Scratched (struken): {', '.join(scratched_horses)}")
+
                 # Process race through predictor
                 df = self.predictor.processor.process_race_data([race_data], self.predictor.feature_cols)
                 if df.empty:
@@ -435,6 +445,16 @@ class BettingSlipGenerator:
                 if not race_data:
                     print(f"   ⚠️  Could not fetch race details")
                     continue
+
+                # Check for scratched horses and display them
+                scratched_horses = []
+                for start in race_data.get('starts', []):
+                    if start.get('scratched', False):
+                        horse_name = start.get('horse', {}).get('name', 'Unknown')
+                        start_num = start.get('number', '?')
+                        scratched_horses.append(f"#{start_num} {horse_name}")
+                if scratched_horses:
+                    print(f"   ⚠️  Scratched (struken): {', '.join(scratched_horses)}")
 
                 # Process race through predictor
                 df = self.predictor.processor.process_race_data([race_data], self.predictor.feature_cols)

@@ -74,6 +74,14 @@ class TemporalDataProcessor:
         # Convert to DataFrame
         df = pd.DataFrame(all_horse_data)
 
+        # Filter out scratched horses (struken)
+        if 'scratched' in df.columns:
+            scratched_count = df['scratched'].sum()
+            if scratched_count > 0:
+                scratched_horses = df[df['scratched'] == True]['horse_name'].tolist()
+                logger.info(f"Filtering out {scratched_count} scratched horse(s): {', '.join(scratched_horses)}")
+                df = df[df['scratched'] != True].reset_index(drop=True)
+
         # Ensure date column exists
         if 'race_date' in df.columns:
             df['date'] = pd.to_datetime(df['race_date'])
@@ -186,6 +194,9 @@ class TemporalDataProcessor:
             # Results (for completed races)
             'finish_place': result.get('place', 0) if result else 0,
             'galloped': result.get('galloped', False) if result else False,
+
+            # Scratched status (horse withdrawn from race)
+            'scratched': start.get('scratched', False),
         }
 
         return data

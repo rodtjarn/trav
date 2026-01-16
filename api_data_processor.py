@@ -51,6 +51,14 @@ class APIDataProcessor:
         # Convert to DataFrame
         df = pd.DataFrame(all_horse_data)
 
+        # Filter out scratched horses (struken)
+        if 'scratched' in df.columns:
+            scratched_count = df['scratched'].sum()
+            if scratched_count > 0:
+                scratched_horses = df[df['scratched'] == True]['horse_name'].tolist()
+                logger.info(f"Filtering out {scratched_count} scratched horse(s): {', '.join(scratched_horses)}")
+                df = df[df['scratched'] != True].reset_index(drop=True)
+
         # Apply all processing steps
         df = self.add_temporal_features(df)
         df = self.add_post_position_features(df)
@@ -184,6 +192,9 @@ class APIDataProcessor:
             'galloped': result.get('galloped', False) if result else False,
             'prize_money': result.get('prizeMoney', 0) if result else 0,
             'final_odds': result.get('finalOdds', None) if result else None,
+
+            # Scratched status (horse withdrawn from race)
+            'scratched': start.get('scratched', False),
         }
 
         return data
